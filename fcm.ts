@@ -315,4 +315,4 @@ export async function sendPushToProjectMembers(
   }
 }
 
-export const WEB_APP_URL = () => Deno.env.get('WEB_APP_URL');
+export const WEB_APP_URL = () => Deno.env.get('WEB_APP_URL') || 'https://josam-developer.github.io/band-calendar-web-app/';
