@@ -47,18 +47,3 @@ test('limited users only receive own events or events explicitly shared with the
   assert.deepEqual(recipients, ['limited-owner', 'limited-selected', 'manager']);
 });
 
-test('temporary add-entry mode excludes every limited user, including the owner', () => {
-  const recipients = selectEventNotificationRecipients(
-    [
-      { user_id: 'admin', role: 0 },
-      { user_id: 'manager', role: 1 },
-      { user_id: 'limited-owner', role: 2 },
-      { user_id: 'limited-selected', role: 2 },
-    ],
-    ['limited-selected'],
-    'limited-owner',
-    true,
-  );
-
-  assert.deepEqual(recipients, ['admin']);
-});

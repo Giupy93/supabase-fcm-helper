@@ -6,13 +6,13 @@ export interface ProjectGroupMember {
 /**
  * Mirror get-entries project-role visibility. Admins can see every event,
  * managers see admin/manager-owned events, and limited users see their own
- * events plus entries explicitly shared with them.
+ * events plus entries explicitly shared with them. For notifications, limited
+ * members are notified only when explicitly included in visibleUserIds.
  */
 export function selectEventNotificationRecipients(
   groupMembers: ProjectGroupMember[],
   visibleUserIds: string[],
   eventOwnerId: string,
-  excludeLimitedUsers = false,
 ): string[] {
   const firstRoleByUser = new Map<string, number>();
   const allRolesByUser = new Map<string, Set<number>>();
@@ -41,7 +41,6 @@ export function selectEventNotificationRecipients(
     ) {
       recipients.add(userId);
     } else if (
-      !excludeLimitedUsers &&
       role === 2 &&
       (userId === eventOwnerId || visibleIds.has(userId))
     ) {
@@ -57,7 +56,6 @@ export async function getProjectEventNotificationRecipients(
   projectId: string | number,
   visibleUserIds: string[] = [],
   eventOwnerId: string,
-  excludeLimitedUsers = false,
 ): Promise<string[]> {
   const { data: projectGroups, error } = await adminClient
     .from('groups')
@@ -74,6 +72,5 @@ export async function getProjectEventNotificationRecipients(
     groupMembers,
     visibleUserIds,
     eventOwnerId,
-    excludeLimitedUsers,
   );
 }
