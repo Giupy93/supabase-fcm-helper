@@ -16,7 +16,7 @@
 
 import * as Sentry from "https://deno.land/x/sentry/index.mjs";
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
-import { classifyReminderFcmResponse, type DevicePushResult } from 'https://raw.esm.sh/gh/Giupy93/supabase-fcm-helper@96002da/reminder_validation.ts';
+import { classifyReminderFcmResponse } from 'https://esm.sh/gh/Giupy93/supabase-fcm-helper/reminder_validation.ts';
 
 const FCM_ENDPOINT = 'https://fcm.googleapis.com/v1/projects/{projectId}/messages:send';
 const OAUTH_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -333,7 +333,7 @@ export async function sendReminderPushToDevice(
   token: string,
   lang: string,
   payload: PushPayload,
-): Promise<DevicePushResult> {
+): Promise<ReturnType<typeof classifyReminderFcmResponse>> {
   const { account } = getServiceAccount();
   if (!account) {
     return { status: 'retry', error: 'Firebase service account unavailable' };
