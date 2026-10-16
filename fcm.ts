@@ -15,7 +15,8 @@
  */
 
 import * as Sentry from "https://deno.land/x/sentry/index.mjs";
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
+import { classifyReminderFcmResponse, type DevicePushResult } from './reminder_validation.ts';
 
 const FCM_ENDPOINT = 'https://fcm.googleapis.com/v1/projects/{projectId}/messages:send';
 const OAUTH_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -36,6 +37,7 @@ interface PushPayload {
   params?: Record<string, string>;
   link?: string;
   tag?: string;
+  ttlSeconds?: number;
 }
 
 interface ServiceAccountResult {
@@ -68,7 +70,14 @@ function base64UrlEncode(data: Uint8Array | string): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+let accessTokenRequest: Promise<string | null> | null = null;
 async function getAccessToken(account: ServiceAccount): Promise<string | null> {
+  if (cachedToken && cachedToken.expiresAt - 60 > Math.floor(Date.now()/1000)) return cachedToken.value;
+  if (accessTokenRequest) return accessTokenRequest;
+  accessTokenRequest = requestAccessToken(account);
+  try { return await accessTokenRequest; } finally { accessTokenRequest = null; }
+}
+async function requestAccessToken(account: ServiceAccount): Promise<string | null> {
   const now = Math.floor(Date.now() / 1000);
   if (cachedToken && cachedToken.expiresAt - 60 > now) {
     return cachedToken.value;
@@ -103,6 +112,7 @@ async function getAccessToken(account: ServiceAccount): Promise<string | null> {
     const jwt = `${unsigned}.${base64UrlEncode(new Uint8Array(signature))}`;
 
     const response = await fetch(OAUTH_ENDPOINT, {
+      signal: AbortSignal.timeout(15000),
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -176,7 +186,7 @@ export function isFcmTokenDead(status: number, errorText: string): boolean {
 
 /** Invia una push data-only a tutti i token FCM di un utente. */
 export async function sendPushToUser(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: SupabaseClient,
   userId: string,
   payload: PushPayload,
 ): Promise<boolean> {
@@ -272,7 +282,7 @@ export async function sendPushToUser(
  * Restituisce la lista degli userId notificati (per il logging nelle funzioni).
  */
 export async function sendPushToProjectMembers(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: SupabaseClient,
   projectId: string | number,
   excludeUserId: string,
   payload: PushPayload,
@@ -316,3 +326,55 @@ export async function sendPushToProjectMembers(
 }
 
 export const WEB_APP_URL = () => Deno.env.get('WEB_APP_URL');
+
+/** Per-device result for durable reminder retries. Existing callers keep the
+ * boolean sendPushToUser API. Token cleanup remains the worker's responsibility. */
+export async function sendReminderPushToDevice(
+  token: string,
+  lang: string,
+  payload: PushPayload,
+): Promise<DevicePushResult> {
+  const { account } = getServiceAccount();
+  if (!account) {
+    return { status: 'retry', error: 'Firebase service account unavailable' };
+  }
+  const accessToken = await getAccessToken(account);
+  if (!accessToken) {
+    return { status: 'retry', error: 'Firebase authentication unavailable' };
+  }
+  try {
+    const response = await fetch(
+      FCM_ENDPOINT.replace('{projectId}', account.project_id),
+      {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: {
+            token,
+            data: {
+              titleKey: payload.titleKey,
+              bodyKey: payload.bodyKey,
+              ...payload.params,
+              lang: lang === 'en' ? 'en' : 'it',
+              link: payload.link ?? '/calendar',
+              tag: payload.tag ?? '',
+            },
+            webpush: {
+              headers: {
+                TTL: String(Math.max(0, Math.min(payload.ttlSeconds ?? 3600, 3600))),
+                Urgency: 'normal',
+              },
+            },
+          },
+        }),
+      },
+    );
+    return classifyReminderFcmResponse(response.status, await response.text());
+  } catch {
+    return { status: 'retry', error: 'FCM network or timeout error' };
+  }
+}
