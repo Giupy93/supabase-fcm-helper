@@ -28,6 +28,7 @@ export interface EntryReadOptions {
   mode?: "personal" | "band";
   groupId?: string;
   offset: number;
+  after?: { date: string; id: string };
 }
 export function parseEntryReadOptions(body: any): EntryReadOptions {
   const search = body.search === true;
@@ -64,27 +65,50 @@ export function parseEntryReadOptions(body: any): EntryReadOptions {
   options.groupId = body.group_id ?? undefined;
   if (body.cursor != null) {
     const cursor = body.cursor;
+    if (typeof cursor !== "object" || Array.isArray(cursor)) {
+      throw new EntryRequestError("Invalid cursor");
+    }
     if (
-      typeof cursor !== "object" || !Number.isSafeInteger(cursor.offset) ||
-      cursor.offset < 0 || cursor.offset > 10000000 ||
-      Object.keys(cursor).some((key) => key !== "offset")
-    ) throw new EntryRequestError("Invalid cursor");
-    options.offset = cursor.offset;
+      Object.keys(cursor).length === 2 && "date" in cursor && "id" in cursor
+    ) {
+      const date = civilDate(cursor.date);
+      if (
+        typeof cursor.id !== "string" ||
+        !/^[a-z0-9_-]{1,512}$/i.test(cursor.id) ||
+        date < options.startDate! ||
+        (options.endDate && date >= options.endDate)
+      ) {
+        throw new EntryRequestError("Invalid cursor");
+      }
+      options.after = { date, id: cursor.id };
+    } else {
+      // Accept already-issued offset cursors during the client rollout.
+      if (
+        !Number.isSafeInteger(cursor.offset) || cursor.offset < 0 ||
+        cursor.offset > 10000000 || Object.keys(cursor).length !== 1 ||
+        !("offset" in cursor)
+      ) throw new EntryRequestError("Invalid cursor");
+      options.offset = cursor.offset;
+    }
   }
+
   return options;
 }
 
 // Only new calls explicitly requesting a bounded period or search need complete
-// source sets. Legacy calls await their original query unchanged. Keep the
-// original source order: generated entries choose the first source per user/day.
+// source sets. Legacy calls await their original query unchanged. Extended
+// reads use a unique order so database pages cannot drift across equal dates.
 export async function entryQueryResult(
   makeQuery: () => any,
   extended: boolean,
+  orderColumn = "id",
 ): Promise<{ data: any[] | null; error: any }> {
   if (!extended) return await makeQuery();
   const rows: any[] = [];
   for (let offset = 0;;) {
-    const { data, error, count } = await makeQuery().range(
+    const { data, error, count } = await makeQuery().order(orderColumn, {
+      ascending: true,
+    }).range(
       offset,
       offset + 199,
     );
@@ -148,9 +172,17 @@ export function filterEntryResults(
   // Only search needs a deterministic tie-breaker for result pages. The legacy
   // and bounded-calendar responses retain the original date-only ordering.
   result.sort((a, b) =>
-    new Date(a.start_date).getTime() - new Date(b.start_date).getTime() ||
+    civilDate(a.start_date).localeCompare(civilDate(b.start_date), "en") ||
     String(a.id).localeCompare(String(b.id), "en")
   );
+  if (options.after) {
+    const after = options.after;
+    result = result.filter((entry) => {
+      const date = civilDate(entry.start_date);
+      return date > after.date || (date === after.date &&
+        String(entry.id).localeCompare(after.id, "en") > 0);
+    });
+  }
   const page = result.slice(options.offset, options.offset + 50).map((entry) =>
     !personal && entry.project_id !== context.projectId
       ? { ...entry, type: 0 }
@@ -159,6 +191,11 @@ export function filterEntryResults(
   const next = options.offset + page.length;
   return {
     entries: page,
-    next_cursor: next < result.length ? { offset: next } : null,
+    next_cursor: next < result.length && page.length
+      ? {
+        date: civilDate(page[page.length - 1].start_date),
+        id: String(page[page.length - 1].id),
+      }
+      : null,
   };
 }
