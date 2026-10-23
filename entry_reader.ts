@@ -151,6 +151,9 @@ export function filterEntryResults(
     : context.groups.flatMap((g) => g.groupUser ?? []);
   const groupUserIds = new Set(members.map((m: any) => m.user_id));
   const personal = context.currentRole === 2 || options.mode === "personal";
+  // Presentation follows the requested view; the role-based filter below still
+  // narrows the canonical result set to the user's permitted entries.
+  const bandPresentation = options.mode !== "personal";
   result = result.filter((entry) => {
     // These only narrow the already-authorized original result set.
     if (
@@ -160,9 +163,10 @@ export function filterEntryResults(
         : !(entry.project_id === context.projectId ||
           groupUserIds.has(entry.user_id))
     ) return false;
-    const displayedType = !personal && entry.project_id !== context.projectId
-      ? 0
-      : entry.type;
+    const displayedType =
+      bandPresentation && entry.project_id !== context.projectId
+        ? 0
+        : entry.type;
     if (options.type != null && displayedType !== options.type) return false;
     const text = `${entry.description ?? entry.motivo ?? ""} ${
       entry.city ?? ""
@@ -184,7 +188,7 @@ export function filterEntryResults(
     });
   }
   const page = result.slice(options.offset, options.offset + 50).map((entry) =>
-    !personal && entry.project_id !== context.projectId
+    bandPresentation && entry.project_id !== context.projectId
       ? { ...entry, type: 0 }
       : entry
   );
