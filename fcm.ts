@@ -222,7 +222,10 @@ export async function sendPushToUser(
       const message = {
         message: {
           token,
+          // Data-only Android delivery must wake the background handler promptly.
+          android: { priority: 'high' },
           data: {
+            recipientId: userId,
             titleKey: payload.titleKey,
             bodyKey: payload.bodyKey,
             ...(payload.params ?? {}),
@@ -355,6 +358,10 @@ export async function sendReminderPushToDevice(
         body: JSON.stringify({
           message: {
             token,
+            android: {
+              priority: 'high',
+              ttl: `${Math.max(0, Math.min(payload.ttlSeconds ?? 3600, 3600))}s`,
+            },
             data: {
               titleKey: payload.titleKey,
               bodyKey: payload.bodyKey,
